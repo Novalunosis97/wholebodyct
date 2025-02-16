@@ -383,7 +383,7 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
                 nifti_path = convert_dicom_to_nifti(dicom_files, nifti_path)
         
         # Download the model if needed
-                model_name = "wholeBody_ct_segmentation"
+        model_name = "wholeBody_ct_segmentation"
         download(name=model_name, bundle_dir=download_dir)
         model_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'models', 'model_lowres.pt')
         config_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'configs', 'inference.json')
