@@ -1,5 +1,11 @@
-import streamlit as st
 import os
+os.environ['DISPLAY'] = ':99'
+
+# If using X virtual framebuffer
+os.system('Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &')
+
+# Then proceed with your regular imports
+import streamlit as st
 import tempfile
 import zipfile
 import io
@@ -8,7 +14,32 @@ import numpy as np
 from monai.bundle import ConfigParser, download
 from monai.transforms import LoadImage, EnsureChannelFirst, Orientation, Compose
 from skimage import measure
+
+# Configure VTK for offscreen rendering
 import vtk
+vtk.vtkOutputWindow.SetGlobalWarningDisplay(0)
+
+# Create offscreen rendering window
+render_window = vtk.vtkRenderWindow()
+render_window.SetOffScreenRendering(1)
+
+# Modify save_vtk_polydata function to use offscreen rendering
+def save_vtk_polydata(mesh, filename):
+    # Ensure normals are properly calculated
+    normals = vtk.vtkPolyDataNormals()
+    normals.SetInputData(mesh)
+    normals.ConsistencyOn()  # Ensure consistency of normals
+    normals.SplittingOff()  # Disable splitting
+    normals.AutoOrientNormalsOn()  # Automatically orient normals
+    normals.Update()
+    mesh_with_normals = normals.GetOutput()
+
+    writer = vtk.vtkOBJWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(mesh_with_normals)
+    writer.Write()
+
+# Continue with the rest of your imports and code...
 import shutil
 import time
 import glob
@@ -56,21 +87,6 @@ The segmentation uses deep learning to identify over 100 different anatomical st
 </p>
 """, unsafe_allow_html=True)
 
-# Import the visualization functions
-def save_vtk_polydata(mesh, filename):
-    # Ensure normals are properly calculated
-    normals = vtk.vtkPolyDataNormals()
-    normals.SetInputData(mesh)
-    normals.ConsistencyOn()  # Ensure consistency of normals
-    normals.SplittingOff()  # Disable splitting
-    normals.AutoOrientNormalsOn()  # Automatically orient normals
-    normals.Update()
-    mesh_with_normals = normals.GetOutput()
-
-    writer = vtk.vtkOBJWriter()
-    writer.SetFileName(filename)
-    writer.SetInputData(mesh_with_normals)
-    writer.Write()
     
 def visualize_3d_multilabel(segmentation, output_directory, return_preview=False):
     if isinstance(segmentation, torch.Tensor):
