@@ -1,0 +1,16 @@
+streamlit
+torch
+numpy
+monai
+pydicom
+nibabel
+itk
+vtk
+scikit-image>
+shutil
+tempfile
+zipfile
+glob
+io
+os
+time
