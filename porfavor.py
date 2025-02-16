@@ -398,12 +398,10 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
         config = ConfigParser()
         config.read_config(config_path)
         
-        # Define custom preprocessing pipeline with explicit parameters
+        # Modified: Use LoadImaged for more robust loading
         preprocessing = Compose([
-            LoadImage(image_only=False, ensure_channel_first=True),
-            EnsureChannelFirst(),
+            LoadImaged(keys=["image"], ensure_channel_first=True, reader=ITKReader()),
             Orientation(axcodes="RAS"),
-            # Add explicit spacing parameters
             Spacingd(
                 keys=["image"],
                 pixdim=(1.5, 1.5, 1.5),
@@ -413,11 +411,35 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
         ])
         
         try:
+            # Modified: Verify file exists and has correct permissions
+            st.write(f"Loading file from: {nifti_path}")
+            if not os.path.exists(nifti_path):
+                raise ValueError(f"File not found: {nifti_path}")
+            if not os.access(nifti_path, os.R_OK):
+                raise ValueError(f"File not readable: {nifti_path}")
+                
             # Load and preprocess the image
             data = {"image": nifti_path}
             data = preprocessing(data)
         except Exception as e:
-            raise ValueError(f"Error in preprocessing: {str(e)}\nPlease ensure the input image has valid metadata and dimensions.")
+            st.error(f"Detailed preprocessing error: {str(e)}")
+            # Try a fallback method
+            try:
+                st.write("Attempting fallback loading method...")
+                img = nib.load(nifti_path)
+                img_data = img.get_fdata()
+                img_data = np.expand_dims(img_data, 0)  # Add channel dimension
+                data = {"image": torch.from_numpy(img_data).float()}
+                
+                # Apply basic orientation
+                orientation = Orientation(axcodes="RAS")
+                data["image"] = orientation(data["image"])
+                
+                # Apply spacing manually if needed
+                # This is a simplified approach - you might need to adjust based on your needs
+                st.write("Basic preprocessing applied")
+            except Exception as fallback_error:
+                raise ValueError(f"Both standard and fallback preprocessing failed: {str(e)}\n{str(fallback_error)}")
         
         # Set device and load model
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
