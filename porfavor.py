@@ -1,3 +1,6 @@
+import os
+os.environ["DISPLAY"] = ":99"
+
 import streamlit as st
 import os
 import tempfile
