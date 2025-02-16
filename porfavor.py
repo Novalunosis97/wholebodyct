@@ -14,7 +14,8 @@ from monai.transforms import (
     EnsureChannelFirst, 
     Orientation, 
     Compose,
-    Spacingd
+    Spacingd,
+    LoadImaged
 )
 from skimage import measure
 import vtk
