@@ -7,6 +7,5 @@ nibabel
 itk
 vtk
 scikit-image
-io
 os
 time
