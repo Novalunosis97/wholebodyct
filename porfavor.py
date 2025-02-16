@@ -383,7 +383,7 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
                 nifti_path = convert_dicom_to_nifti(dicom_files, nifti_path)
         
         # Download the model if needed
-        model_name = "wholeBody_ct_segmentation"
+                model_name = "wholeBody_ct_segmentation"
         download(name=model_name, bundle_dir=download_dir)
         model_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'models', 'model_lowres.pt')
         config_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'configs', 'inference.json')
@@ -392,9 +392,26 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
         config = ConfigParser()
         config.read_config(config_path)
         
-        # Preprocess the data
-        preprocessing = config.get_parsed_content("preprocessing")
-        data = preprocessing({'image': nifti_path})
+        # Define custom preprocessing pipeline with explicit parameters
+        preprocessing = Compose([
+            LoadImage(image_only=False, ensure_channel_first=True),
+            EnsureChannelFirst(),
+            Orientation(axcodes="RAS"),
+            # Add explicit spacing parameters
+            Spacingd(
+                keys=["image"],
+                pixdim=(1.5, 1.5, 1.5),
+                mode=("bilinear"),
+                allow_missing_keys=True
+            )
+        ])
+        
+        try:
+            # Load and preprocess the image
+            data = {"image": nifti_path}
+            data = preprocessing(data)
+        except Exception as e:
+            raise ValueError(f"Error in preprocessing: {str(e)}\nPlease ensure the input image has valid metadata and dimensions.")
         
         # Set device and load model
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
