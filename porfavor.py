@@ -556,15 +556,16 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
         
         return preview_meshes
         
-        finally:
-        # Clean up temporary directories
+    finally:
+        # Clean up the download directory
         shutil.rmtree(download_dir, ignore_errors=True)
+        # Clean up temp directories if created for DICOM conversion
         if is_dicom and nifti_path != input_file_path:
             if os.path.exists(os.path.dirname(nifti_path)):
                 shutil.rmtree(os.path.dirname(nifti_path), ignore_errors=True)
         if is_dicom and 'temp_dicom_dir' in locals():
             shutil.rmtree(temp_dicom_dir, ignore_errors=True)
-            
+
 # Add option for file type selection
 file_type = st.radio(
     "Select input file type:",
