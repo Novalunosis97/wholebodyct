@@ -7,8 +7,6 @@ nibabel
 itk
 vtk
 scikit-image
-tempfile
-zipfile
 glob
 io
 os
