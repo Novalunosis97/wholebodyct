@@ -1,11 +1,5 @@
-import os
-os.environ['DISPLAY'] = ':99'
-
-# If using X virtual framebuffer
-os.system('Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &')
-
-# Then proceed with your regular imports
 import streamlit as st
+import os
 import tempfile
 import zipfile
 import io
@@ -14,32 +8,7 @@ import numpy as np
 from monai.bundle import ConfigParser, download
 from monai.transforms import LoadImage, EnsureChannelFirst, Orientation, Compose
 from skimage import measure
-
-# Configure VTK for offscreen rendering
 import vtk
-vtk.vtkOutputWindow.SetGlobalWarningDisplay(0)
-
-# Create offscreen rendering window
-render_window = vtk.vtkRenderWindow()
-render_window.SetOffScreenRendering(1)
-
-# Modify save_vtk_polydata function to use offscreen rendering
-def save_vtk_polydata(mesh, filename):
-    # Ensure normals are properly calculated
-    normals = vtk.vtkPolyDataNormals()
-    normals.SetInputData(mesh)
-    normals.ConsistencyOn()  # Ensure consistency of normals
-    normals.SplittingOff()  # Disable splitting
-    normals.AutoOrientNormalsOn()  # Automatically orient normals
-    normals.Update()
-    mesh_with_normals = normals.GetOutput()
-
-    writer = vtk.vtkOBJWriter()
-    writer.SetFileName(filename)
-    writer.SetInputData(mesh_with_normals)
-    writer.Write()
-
-# Continue with the rest of your imports and code...
 import shutil
 import time
 import glob
@@ -87,7 +56,82 @@ The segmentation uses deep learning to identify over 100 different anatomical st
 </p>
 """, unsafe_allow_html=True)
 
+# Import the visualization functions
+def save_vtk_polydata(mesh, filename):
+    # Ensure normals are properly calculated
+    normals = vtk.vtkPolyDataNormals()
+    normals.SetInputData(mesh)
+    normals.ConsistencyOn()  # Ensure consistency of normals
+    normals.SplittingOff()  # Disable splitting
+    normals.AutoOrientNormalsOn()  # Automatically orient normals
+    normals.Update()
+    mesh_with_normals = normals.GetOutput()
+
+    writer = vtk.vtkOBJWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(mesh_with_normals)
+    writer.Write()
     
+def save_combined_obj(meshes, filename, color_map):
+    """
+    Save all meshes to a single OBJ file with material definitions for colors
+    """
+    # Create MTL file for materials
+    mtl_filename = os.path.splitext(filename)[0] + '.mtl'
+    with open(mtl_filename, 'w') as mtl_file:
+        mtl_file.write("# Material definitions for CT segmentation\n\n")
+        
+        # Write material definitions
+        for label, color in color_map.items():
+            if label == 0:  # Skip background
+                continue
+            mtl_file.write(f"newmtl material_{label}\n")
+            mtl_file.write(f"Ka {color[0]} {color[1]} {color[2]}\n")  # Ambient color
+            mtl_file.write(f"Kd {color[0]} {color[1]} {color[2]}\n")  # Diffuse color
+            mtl_file.write(f"Ks 0.1 0.1 0.1\n")  # Specular color
+            mtl_file.write("d 1.0\n")  # Opacity
+            mtl_file.write("illum 2\n\n")  # Illumination model
+    
+    # Create OBJ file with references to materials
+    with open(filename, 'w') as obj_file:
+        obj_file.write(f"mtllib {os.path.basename(mtl_filename)}\n\n")
+        
+        vertex_offset = 1  # OBJ indices start at 1
+        
+        # Process each mesh
+        for label, mesh in meshes.items():
+            if label == 0:  # Skip background
+                continue
+                
+            # Get points and polygons from VTK mesh
+            points = mesh.GetPoints()
+            polys = mesh.GetPolys()
+            
+            # Write material for this segment
+            obj_file.write(f"g segment_{label}\n")
+            obj_file.write(f"usemtl material_{label}\n")
+            
+            # Write vertices
+            for i in range(points.GetNumberOfPoints()):
+                point = points.GetPoint(i)
+                obj_file.write(f"v {point[0]} {point[1]} {point[2]}\n")
+            
+            # Write faces
+            polys.InitTraversal()
+            id_list = vtk.vtkIdList()
+            while polys.GetNextCell(id_list):
+                if id_list.GetNumberOfIds() == 3:  # Triangle
+                    v1 = id_list.GetId(0) + vertex_offset
+                    v2 = id_list.GetId(1) + vertex_offset
+                    v3 = id_list.GetId(2) + vertex_offset
+                    obj_file.write(f"f {v1} {v2} {v3}\n")
+                    
+            # Update vertex offset for next mesh
+            vertex_offset += points.GetNumberOfPoints()
+            
+            # Add a newline between segments
+            obj_file.write("\n")
+
 def visualize_3d_multilabel(segmentation, output_directory, return_preview=False):
     if isinstance(segmentation, torch.Tensor):
         segmentation = segmentation.cpu().numpy()
@@ -100,7 +144,7 @@ def visualize_3d_multilabel(segmentation, output_directory, return_preview=False
 
     segmentation = np.asarray(segmentation, dtype=np.uint8)
 
-    # Define color map (simplified version)
+    # Define color map (abbreviated for space)
     color_map = {
         0: [0, 0, 0],              # Background - Black
         1: [0.8, 0.3, 0.3],        # Spleen - Light Red
@@ -226,7 +270,10 @@ def visualize_3d_multilabel(segmentation, output_directory, return_preview=False
             
         return meshes
     else:
-        # Process all labels and save to files
+        # Dictionary to store all meshes
+        all_meshes = {}
+        
+        # Process all labels and create VTK meshes
         for label_idx in np.unique(segmentation):
             if label_idx == 0:  # Skip background
                 continue
@@ -257,11 +304,18 @@ def visualize_3d_multilabel(segmentation, output_directory, return_preview=False
             smoother.FeatureEdgeSmoothingOff()
             smoother.BoundarySmoothingOn()
             smoother.Update()
-            mesh = smoother.GetOutput()
-
-            # Save mesh to file
+            
+            # Store the smoothed mesh
+            all_meshes[label_idx] = smoother.GetOutput()
+        
+        # Save individual meshes (kept for backward compatibility)
+        for label_idx, mesh in all_meshes.items():
             output_path = os.path.join(output_directory, f'label_{label_idx}.obj')
             save_vtk_polydata(mesh, output_path)
+        
+        # Save combined mesh with materials
+        combined_output_path = os.path.join(output_directory, 'combined_segmentation.obj')
+        save_combined_obj(all_meshes, combined_output_path, color_map)
 
 def save_metadata(metadata, output_directory):
     metadata_path = os.path.join(output_directory, "metadata.json")
@@ -469,7 +523,9 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
             {"label": 102, "color": [0.4, 0.2, 0.2]},     # Iliopsoas Left - Dark Brown
             {"label": 103, "color": [0.4, 0.2, 0.2]},     # Iliopsoas Right - Dark Brown
             {"label": 104, "color": [0.3, 0.3, 0.8]}      # Urinary Bladder - Dark Blue
-        ]}
+        ], 
+        'combined_file' : 'combined_segmentation.obj'
+    }
         save_metadata(metadata, output_directory)
         
         return preview_meshes
