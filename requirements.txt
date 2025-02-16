@@ -6,8 +6,7 @@ pydicom
 nibabel
 itk
 vtk
-scikit-image>
-shutil
+scikit-image
 tempfile
 zipfile
 glob
