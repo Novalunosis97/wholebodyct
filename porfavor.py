@@ -357,15 +357,20 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
     try:
         # Convert DICOM to NIfTI if needed
         if is_dicom:
+            # If input is a list of DICOM files
             if dicom_files:
+                # Convert to NIfTI
                 nifti_path = os.path.join(tempfile.mkdtemp(), 'converted.nii.gz')
                 nifti_path = convert_dicom_to_nifti(dicom_files, nifti_path)
+            # If input is a directory of DICOM files
             elif os.path.isdir(input_file_path):
                 dicom_files = glob.glob(os.path.join(input_file_path, '*.dcm'))
                 if not dicom_files:
                     raise ValueError("No DICOM files found in the directory")
+                # Convert to NIfTI
                 nifti_path = os.path.join(tempfile.mkdtemp(), 'converted.nii.gz')
                 nifti_path = convert_dicom_to_nifti(dicom_files, nifti_path)
+            # If input is a zip file of DICOM files
             else:
                 temp_dicom_dir = tempfile.mkdtemp()
                 with zipfile.ZipFile(input_file_path, 'r') as zip_ref:
@@ -373,75 +378,47 @@ def process_ct_scan(input_file_path, output_directory, is_dicom=False, dicom_fil
                 dicom_files = glob.glob(os.path.join(temp_dicom_dir, '*.dcm'))
                 if not dicom_files:
                     raise ValueError("No DICOM files found in the zip file")
+                # Convert to NIfTI
                 nifti_path = os.path.join(tempfile.mkdtemp(), 'converted.nii.gz')
                 nifti_path = convert_dicom_to_nifti(dicom_files, nifti_path)
-
+        
         # Download the model if needed
         model_name = "wholeBody_ct_segmentation"
         download(name=model_name, bundle_dir=download_dir)
         model_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'models', 'model_lowres.pt')
         config_path = os.path.join(download_dir, 'wholeBody_ct_segmentation', 'configs', 'inference.json')
         
-        # Create a custom preprocessing pipeline
-        preprocessing = Compose([
-            LoadImage(image_only=False),
-            EnsureChannelFirst(),
-            # Add custom spacing transform with error handling
-            lambda x: {
-                'image': x['image'] if isinstance(x, dict) else x,
-                'spatial_shape': x['image'].shape if isinstance(x, dict) else x.shape,
-                'spacing': x.get('spacing', (1.0, 1.0, 1.0)) if isinstance(x, dict) else (1.0, 1.0, 1.0)
-            },
-            # Normalize intensity values
-            lambda x: {
-                'image': torch.clamp((x['image'] - x['image'].min()) / 
-                                   (x['image'].max() - x['image'].min() + 1e-8), 0, 1),
-                'spatial_shape': x['spatial_shape'],
-                'spacing': x['spacing']
-            }
-        ])
-
-        # Load and preprocess the data
-        try:
-            data = preprocessing({'image': nifti_path})
-        except Exception as e:
-            st.error(f"Error during preprocessing: {str(e)}")
-            st.error("Please ensure your input file is a valid CT scan.")
-            return None
-
+        # Load configuration
+        config = ConfigParser()
+        config.read_config(config_path)
+        
+        # Preprocess the data
+        preprocessing = config.get_parsed_content("preprocessing")
+        data = preprocessing({'image': nifti_path})
+        
         # Set device and load model
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = torch.load(model_path, map_location=device)
+        model = config.get_parsed_content("network")
+        model.load_state_dict(torch.load(model_path, map_location=device))
         model.to(device)
         model.eval()
-
-        # Run inference with error handling
-        try:
-            with torch.no_grad():
-                # Ensure input is properly formatted
-                input_tensor = data['image'].unsqueeze(0).to(device)
-                if input_tensor.dim() != 4:
-                    raise ValueError(f"Expected 4D input tensor, got {input_tensor.dim()}D")
-                
-                # Run inference
-                output = model(input_tensor)
-                pred = output[0] if isinstance(output, tuple) else output
-                
-            # Post-process the prediction
-            pred = pred.argmax(dim=0).cpu()
-            
-        except Exception as e:
-            st.error(f"Error during inference: {str(e)}")
-            st.error("The model failed to process the image. Please ensure it's a proper CT scan.")
-            return None
-
+        
+        # Run inference
+        inferer = config.get_parsed_content("inferer")
+        postprocessing = config.get_parsed_content("postprocessing")
+        
+        with torch.no_grad():
+            data['pred'] = inferer(data['image'].unsqueeze(0).to(device), network=model)
+        data['pred'] = data['pred'][0]
+        data['image'] = data['image'][0]
+        data = postprocessing(data)
+        
         # Generate segmentation meshes and get preview
-        try:
-            preview_meshes = visualize_3d_multilabel(pred, output_directory, return_preview=True)
-            visualize_3d_multilabel(pred, output_directory, return_preview=False)
-        except Exception as e:
-            st.error(f"Error during visualization: {str(e)}")
-            return None        
+        preview_meshes = visualize_3d_multilabel(data['pred'], output_directory, return_preview=True)
+        
+        # Also save the actual meshes
+        visualize_3d_multilabel(data['pred'], output_directory, return_preview=False)
+        
         # Save metadata (abbreviated here for readability)
         metadata = {'color_map': [
             {"label": 0, "color": [0, 0, 0]},             # Background - Black
