@@ -9,7 +9,13 @@ import io
 import torch
 import numpy as np
 from monai.bundle import ConfigParser, download
-from monai.transforms import LoadImage, EnsureChannelFirst, Orientation, Compose
+from monai.transforms import (
+    LoadImage, 
+    EnsureChannelFirst, 
+    Orientation, 
+    Compose,
+    Spacingd
+)
 from skimage import measure
 import vtk
 import shutil
